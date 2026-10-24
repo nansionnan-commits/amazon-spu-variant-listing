@@ -185,14 +185,80 @@ python verify_listings.py --store zhangaodi --market US --skus <全部子体SKU>
 
 ---
 
-## 待解决问题（跑第一单前必须确认）
+## ✅ ERP 数据获取已打通（用 bsk，不用 cdp）
 
-- [ ] **主图用 ERP 还是多维表格**（老板确认）
-- [ ] **标题/五点用哪套文案生成**（老板确认）
-- [ ] **ERP 列表接口是否支持按 SKU 过滤**
-- [ ] **ERP token 怎么稳定拿**（浏览器 localStorage，会过期）
-- [ ] **变体属性怎么映射成 Amazon variation theme**（颜色/尺寸/组合）
+### 老板已确认的两点
+1. **主图**：用 **ERP 里每个变体自己的主图**（`skuList[].imageList[0]`）
+2. **核心词**：用**多维表格的**；**其他文案按竞品生成**（复用 `amazon-us-listing` 的文案流程）
+
+### 为什么用 bsk 不用 cdp.py
+旧的 `sp-api/cdp.py` 需要 Chrome 带 `--remote-debugging-port=9222` 启动，**现在端口不通**（Chrome 被已有实例接管）。
+**bsk 的 `evaluate` 命令在页面上下文执行 JS，完全替代 cdp，还不需要调试端口。**
+
+### 脚本：`scripts/erp_bsk.py`
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+export BSK_AUTO_START=0
+
+python erp_bsk.py --ping                          # 探活（total ≈23336）
+python erp_bsk.py --sku <子体SKU>                  # SKU → SPU 反查
+python erp_bsk.py --sku <子体SKU> --full           # 反查 + 全部变体明细
+python erp_bsk.py --spu <SPU编码> --out spu.json   # SPU → 详情 JSON
+```
+
+### 🔴 三个关键接口发现（实测）
+
+| 参数 | 有效？ | 说明 |
+|---|---|---|
+| **`skuCode`** | ✅ **有效** | **用子体 SKU 精确反查 SPU**（返回 1 条）← 核心 |
+| `spuCode` | ✅ 有效 | 用 SPU 编码查 |
+| `keyword` | ❌ **无效** | 被忽略，返回 createTime 排序的无关结果 |
+| `code` / `productCode` | ❌ 无效 | 同上 |
+
+**列表接口不返回 `skuList`** → 变体必须再调 `queryById` 拿详情。
+
+### 实测记录
+
+```
+输入：HJZ202610171732NJ98（子体 SKU）
+  ↓ skuCode 反查
+SPU：HJZ20261017173（id=2111348147736109058）
+     Flannel Indoor Cat Sleeping Bag
+  ↓ queryById
+变体：
+  HJZ202610171732NJ98  颜色=棕色,   规格=60x50x16cm  ¥21  7张图
+  HJZ202610171731WS1P  颜色=藏青色, 规格=60x50x16cm  ¥21  7张图
+```
+
+### 核心 JS（在 ERP 页面上下文跑）
+
+```javascript
+var tk = JSON.parse(localStorage.getItem('pro__Access-Token')).value;
+var x = new XMLHttpRequest();
+x.open('POST', 'http://api.hzcwin.com/hzkj-product/product/productLibrary/spu/list', false);  // 同步
+x.setRequestHeader('Content-Type', 'application/json');
+x.setRequestHeader('X-Access-Token', tk);
+x.send(JSON.stringify({pageNo:1, pageSize:5, productStatus:5, skuCode:'<SKU>'}));
+```
+
+### 🔴 四个坑
+
+| 坑 | 解 |
+|---|---|
+| **必须先进 ERP 域** | token 只在 `erp.hzcwin.com` 域可读，脚本有 `ensure_erp_page()` 自动导航 |
+| **`attributes` 是 JSON 字符串** | 要 `json.loads()` 二次解析 |
+| **列表 23336 个，别全量拉** | 用 `skuCode` 精确查 |
+| **token 会过期** | 每次任务重开 session 即可 |
+
+---
+
+## 仍是待确认的（跑第一单前）
+
 - [ ] **父体 SKU 命名**（`{spuCode}-PARENT` 还是别的）
+- [ ] **变体属性 → Amazon variation_theme 映射**（颜色=COLOR？颜色+规格=COLOR/SIZE？）
+- [ ] **副图从多维表格取哪几张**（全部？前 6 张？）
+- [ ] **ERP 图片（alicdn）能否直接给 Amazon**（还是要转存图床）
 
 ---
 
